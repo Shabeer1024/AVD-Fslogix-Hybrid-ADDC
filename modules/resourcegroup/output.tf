@@ -9,7 +9,4 @@ output "resource_group_id" {
 output "location" {
     value = azurerm_resource_group.AVD_lab.location    
 }
-
-output "tags" {
-    value = azurerm_resource_group.AVD_lab.tags
-}
+ 
