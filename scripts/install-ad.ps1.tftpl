@@ -11,18 +11,20 @@ try {
         exit 0
     }
 
-    $domainName     = "${domain_name}"
-    $netbiosName    = "${netbios_name}"
-    $safeModePwdRaw = "${safe_mode_password}"
+    $domainName  = "${domain_name}"
+    $netbiosName = "${netbios_name}"
 
-    Write-Host "Installing AD-Domain-Services + DNS features..."
+    $pwdBytes       = [Convert]::FromBase64String("${safe_mode_password_b64}")
+    $safeModePwdRaw = [System.Text.Encoding]::UTF8.GetString($pwdBytes)
+
+    Write-Host "Domain: $domainName / NetBIOS: $netbiosName"
+
     Install-WindowsFeature -Name AD-Domain-Services, DNS, RSAT-AD-Tools `
         -IncludeManagementTools -ErrorAction Stop
 
     Import-Module ADDSDeployment
     $securePwd = ConvertTo-SecureString -String $safeModePwdRaw -AsPlainText -Force
 
-    Write-Host "Promoting to DC, creating forest $domainName..."
     Install-ADDSForest `
         -DomainName $domainName `
         -DomainNetbiosName $netbiosName `
@@ -47,4 +49,3 @@ catch {
     exit 1
 }
 '@ | Set-Content -Path scripts/install-ad.ps1.tftpl
-Write-Host "[OK] Created scripts/install-ad.ps1.tftpl" -ForegroundColor Green
