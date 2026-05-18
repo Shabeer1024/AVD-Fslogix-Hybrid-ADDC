@@ -115,9 +115,9 @@ module "fslogix_storage" {
 
   depends_on = [module.session_host]
 }
-# =============================================================================
-# Phase 2 - FSLogix Automation (Hybrid Worker)
-# =============================================================================
+
+# FSLogix Automation (Hybrid Worker)
+
 module "fslogix_automation" {
   source = "./modules/fslogix-automation"
 

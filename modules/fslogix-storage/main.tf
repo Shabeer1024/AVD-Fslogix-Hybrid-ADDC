@@ -40,6 +40,8 @@ resource "azurerm_virtual_machine_extension" "install_fslogix" {
   })
 
   timeouts {
-    create = "30m"
-  }
+      create = "60m"
+      update = "60m"
+      delete = "30m"
+   }
 }

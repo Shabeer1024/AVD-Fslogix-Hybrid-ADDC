@@ -1,5 +1,5 @@
 # =============================================================================
-# Phase 2: Automation Account + Hybrid Worker on Session Host
+# Automation Account + Hybrid Worker on Session Host
 # =============================================================================
 
 resource "azurerm_automation_account" "this" {
@@ -31,7 +31,7 @@ resource "azurerm_automation_hybrid_runbook_worker" "sh01" {
 }
 
 # -----------------------------------------------------------------------------
-# Install Hyper-V PowerShell module (provides Resize-VHD) on session host
+#  Install Hyper-V PowerShell module (provides Resize-VHD) on session host
 # -----------------------------------------------------------------------------
 locals {
   hyperv_script = <<-EOT
