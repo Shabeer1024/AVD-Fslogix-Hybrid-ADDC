@@ -40,18 +40,14 @@ resource "azurerm_virtual_machine_run_command" "install_hyperv" {
   virtual_machine_id = var.session_host_vm_id
   location           = var.location
 
-  source {
+ source {
     script = <<-EOT
       $ErrorActionPreference = "Stop"
       try {
           Write-Host "Enabling Hyper-V Management PowerShell module"
           Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-Management-PowerShell -All -NoRestart
-          Import-Module Hyper-V -ErrorAction SilentlyContinue
-          if (Get-Command Resize-VHD -ErrorAction SilentlyContinue) {
-              Write-Host "Resize-VHD available - SUCCESS"
-          } else {
-              Write-Host "Feature enabled but Resize-VHD not yet loaded - reboot may be needed"
-          }
+          Write-Host "Scheduling delayed reboot in 60 seconds to activate module"
+          shutdown /r /t 60 /c "Hyper-V module activation reboot"
           exit 0
       } catch {
           Write-Error $_
