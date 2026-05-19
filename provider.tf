@@ -1,20 +1,21 @@
 terraform {
-  cloud {
-    organization = "d2click"
-    workspaces {
-      name = "avd-fslogix-autogrow-lab"
-    }
-  }
+  required_version = ">= 1.5"
 
-  required_version = ">= 1.5.0"
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 4.0"
+      version = "~> 4.6"
     }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.6"
+    }
+  }
+
+  cloud {
+    organization = "d2click"
+    workspaces {
+      name = "avd-fslogix-autogrow-lab"
     }
   }
 }
