@@ -43,7 +43,7 @@ try {
         return
     }
 
-    # Calculate current total logical size across all VHDXes
+    # Calculate total logical size across all VHDXes
     $totalLogicalGB = 0.0
     foreach ($vhdx in $vhdxFiles) {
         try {
@@ -56,7 +56,6 @@ try {
     $result.TotalLogicalAllocatedGB = [math]::Round($totalLogicalGB, 2)
     Write-Output "Total logical allocated: $($result.TotalLogicalAllocatedGB) GB / $CapGB GB cap"
 
-    # Process each VHDX
     foreach ($vhdx in $vhdxFiles) {
         $action = @{
             Profile = $vhdx.Name
@@ -67,11 +66,17 @@ try {
             $vhdInfo = Get-VHD -Path $vhdx.FullName -ErrorAction Stop
             $action.CurrentSizeGB = [math]::Round($vhdInfo.Size / 1GB, 2)
 
-            # Try to mount read-only to check free space
             try {
                 $mounted = Mount-DiskImage -ImagePath $vhdx.FullName -Access ReadOnly -PassThru -ErrorAction Stop
+                Start-Sleep 2
                 $disk = $mounted | Get-Disk
-                $vol = $disk | Get-Partition | Get-Volume | Where-Object { $_.DriveLetter } | Select-Object -First 1
+
+                # FIXED: Find NTFS volume regardless of drive letter
+                # FSLogix VHDXes don't auto-assign drive letters when mounted ReadOnly
+                $vol = $disk | Get-Partition -ErrorAction SilentlyContinue |
+                       Get-Volume -ErrorAction SilentlyContinue |
+                       Where-Object { $_.Size -gt 0 -and ($_.FileSystem -eq 'NTFS' -or $_.FileSystemType -eq 'NTFS') } |
+                       Select-Object -First 1
 
                 if ($vol) {
                     $freePercent = [math]::Round(($vol.SizeRemaining / $vol.Size) * 100, 2)
@@ -79,22 +84,22 @@ try {
                     $action.UsedPercent = $usedPercent
                     $action.FreePercent = $freePercent
 
-                    # Always dismount cleanly
+                    # Dismount cleanly before resize
                     Dismount-DiskImage -ImagePath $vhdx.FullName -ErrorAction SilentlyContinue | Out-Null
 
                     if ($usedPercent -ge $ThresholdPercent) {
-                        $newSizeGB     = $action.CurrentSizeGB + $IncrementGB
+                        $newSizeGB = $action.CurrentSizeGB + $IncrementGB
                         $projectedTotal = $totalLogicalGB + $IncrementGB
 
                         if ($projectedTotal -gt $CapGB) {
                             $action.Status = "SkippedCapReached"
-                            $action.Reason = "Resize would exceed cap (projected $([math]::Round($projectedTotal,2)) GB > $CapGB GB)"
+                            $action.Reason = "Would exceed cap (projected $([math]::Round($projectedTotal,2)) GB > $CapGB GB)"
                             Write-Output "CAP HIT: $($vhdx.Name) - skipping"
                         } else {
                             Resize-VHD -Path $vhdx.FullName -SizeBytes ($newSizeGB * 1GB) -ErrorAction Stop
-                            $action.Status    = "Resized"
+                            $action.Status = "Resized"
                             $action.NewSizeGB = $newSizeGB
-                            $totalLogicalGB  += $IncrementGB
+                            $totalLogicalGB += $IncrementGB
                             Write-Output "RESIZED: $($vhdx.Name) from $($action.CurrentSizeGB) GB to $newSizeGB GB"
                         }
                     } else {
@@ -106,7 +111,6 @@ try {
                     $action.Status = "NoVolumeFound"
                 }
             } catch {
-                # Mount failed - file is likely locked by an active user session
                 $action.Status = "Locked"
                 $action.Reason = "$_"
                 Write-Output "LOCKED: $($vhdx.Name) - user likely logged in, skipping"
@@ -122,10 +126,10 @@ try {
     }
 
     $result.EndTime = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
-    $result.Status  = "Completed"
+    $result.Status = "Completed"
 
 } catch {
-    $result.Status  = "Failed"
+    $result.Status = "Failed"
     $result.Errors += "$_"
     Write-Error $_
 }
