@@ -81,6 +81,47 @@ resource "azurerm_virtual_network_dns_servers" "this" {
   depends_on = [azurerm_virtual_machine_extension.install_ad]
 }
 
+# -----------------------------------------------------------------------------
+# Download Microsoft Entra Connect after DC promotion
+# Run manually: double-click AzureADConnect.msi on the DC desktop
+# Then configure Hybrid Azure AD Join in the Entra Connect wizard
+# -----------------------------------------------------------------------------
+resource "azurerm_virtual_machine_run_command" "download_entra_connect" {
+  name               = "download-entra-connect"
+  virtual_machine_id = azurerm_windows_virtual_machine.dc.id
+  location           = var.location
+
+  source {
+    script = <<-EOT
+      $ErrorActionPreference = "Stop"
+      Start-Transcript "C:\Windows\Temp\entra-connect-download.log" -Append -Force
+      try {
+          $dest = "C:\Users\Public\Desktop\AzureADConnect.msi"
+          if (Test-Path $dest) {
+              Write-Host "Entra Connect installer already exists at $dest"
+          } else {
+              Write-Host "Downloading Microsoft Entra Connect..."
+              $url = "https://download.microsoft.com/download/B/0/0/B00291D0-5A83-4DE7-86F5-980BC00DE05A/AzureADConnect.msi"
+              Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
+              Write-Host "Download complete: $dest"
+          }
+          Stop-Transcript
+          exit 0
+      } catch {
+          Write-Host "ERROR: $_"
+          Stop-Transcript
+          exit 1
+      }
+    EOT
+  }
+
+  depends_on = [azurerm_virtual_network_dns_servers.this]
+
+  timeouts {
+    create = "30m"
+  }
+}
+
 resource "azurerm_dev_test_global_vm_shutdown_schedule" "dc" {
   virtual_machine_id    = azurerm_windows_virtual_machine.dc.id
   location              = var.location

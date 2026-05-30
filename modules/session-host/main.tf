@@ -103,6 +103,57 @@ resource "azurerm_virtual_machine_extension" "avd_dsc" {
 }
 
 # -----------------------------------------------------------------------------
+# Hybrid Azure AD Join — force immediate Entra ID registration after domain join
+# Without this, the scheduled task can take hours to run automatically
+# -----------------------------------------------------------------------------
+resource "azurerm_virtual_machine_run_command" "hybrid_join" {
+  name               = "trigger-hybrid-aad-join"
+  virtual_machine_id = azurerm_windows_virtual_machine.sh.id
+  location           = var.location
+
+  source {
+    script = <<-EOT
+      $ErrorActionPreference = "Stop"
+      Start-Transcript "C:\Windows\Temp\hybrid-join.log" -Append -Force
+      try {
+          Write-Host "Waiting 60s for domain join to fully settle..."
+          Start-Sleep -Seconds 60
+
+          Write-Host "Triggering Hybrid Azure AD Join..."
+          & dsregcmd /join
+          Start-Sleep -Seconds 30
+
+          Write-Host "=== Hybrid Join Status ==="
+          $status = dsregcmd /status
+          $status | Select-String "AzureAdJoined|DomainJoined|WorkplaceJoined"
+
+          $azJoined = ($status | Select-String "AzureAdJoined\s*:\s*YES").Count -gt 0
+          $domJoined = ($status | Select-String "DomainJoined\s*:\s*YES").Count -gt 0
+
+          if ($azJoined -and $domJoined) {
+              Write-Host "SUCCESS: Hybrid Azure AD Join confirmed."
+          } else {
+              Write-Host "WARNING: Join may still be pending. Check dsregcmd /status after login."
+          }
+
+          Stop-Transcript
+          exit 0
+      } catch {
+          Write-Host "ERROR: $_"
+          Stop-Transcript
+          exit 1
+      }
+    EOT
+  }
+
+  depends_on = [azurerm_virtual_machine_extension.avd_dsc]
+
+  timeouts {
+    create = "30m"
+  }
+}
+
+# -----------------------------------------------------------------------------
 # Auto-shutdown
 # -----------------------------------------------------------------------------
 resource "azurerm_dev_test_global_vm_shutdown_schedule" "sh" {
