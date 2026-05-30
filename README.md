@@ -312,7 +312,7 @@ terraform apply
 
 ## Author
 
-**Shabeer S** — Azure Cloud Engineer | AVD Specialist | AZ-140 | AZ-700 | ITIL v4
+**Shabeer S** — Azure Cloud Enthusiast ☁️ | CloudOps  | Exploring Azure Administration | AVD Specialist | AZ-700 | AZ-140 | Terraform | Azure Networking | Modern Workspace | ITIL V4 |
 
 - 13+ years enterprise IT (EUC → Cloud Engineer transition)
 - Specialising in AVD, FSLogix, Azure Networking, and Infrastructure as Code
