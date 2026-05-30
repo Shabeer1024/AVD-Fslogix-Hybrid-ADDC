@@ -26,7 +26,7 @@ sh_vm_size = "Standard_D2s_v3"
 
 
 dc_vm_name             = "dc01"
-dc_vm_size             = "Standard_B2s"
+dc_vm_size             = "Standard_D2s_v3"
 dc_admin_username      = "labadmin"
 dc_private_ip          = "10.0.1.4"
 domain_name            = "lab.local"

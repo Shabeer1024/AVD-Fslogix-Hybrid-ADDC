@@ -52,7 +52,7 @@ variable "dc_vm_name" {
 variable "dc_vm_size" {
   description = "DC VM SKU"
   type        = string
-  default     = "Standard_B2s"
+  default     = "Standard_D2s_v3"
 }
 
 variable "dc_admin_username" {
