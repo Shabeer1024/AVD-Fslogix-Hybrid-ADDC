@@ -1,79 +1,112 @@
-# AVD with FSLogix Profile Auto-Grow Automation
+# AVD + FSLogix + Hybrid Azure AD Join — Phase 1 & 2
 
-> Self-healing Azure Virtual Desktop infrastructure that detects FSLogix profile capacity issues and resizes individual user containers automatically — zero human intervention.
+> Fully automated Azure Virtual Desktop lab with FSLogix profile containers, AD DS authentication for Azure Files, and Hybrid Azure AD Join. Zero manual steps — everything deployed via Terraform and PowerShell Run Commands.
 
-[![Terraform](https://img.shields.io/badge/Terraform-1.15+-7B42BC?logo=terraform&logoColor=white)](https://www.terraform.io/)
+[![Terraform](https://img.shields.io/badge/Terraform-1.5+-7B42BC?logo=terraform&logoColor=white)](https://www.terraform.io/)
 [![Azure](https://img.shields.io/badge/Azure-Virtual_Desktop-0089D6?logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/products/virtual-desktop)
-[![HCP Terraform](https://img.shields.io/badge/HCP_Terraform-VCS--driven-844FBA?logo=terraform&logoColor=white)](https://www.hashicorp.com/products/terraform)
-[![PowerShell](https://img.shields.io/badge/PowerShell-7.0+-5391FE?logo=powershell&logoColor=white)](https://docs.microsoft.com/powershell)
+[![PowerShell](https://img.shields.io/badge/PowerShell-5.1+-5391FE?logo=powershell&logoColor=white)](https://docs.microsoft.com/powershell)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
 ---
 
-## The Problem This Solves
+## What This Project Solves
 
-> *"My FSLogix profile is full, please resize it."*
+Most AVD + FSLogix guides still tell you to:
+- RDP into the DC manually and run `Join-AzStorageAccount` by hand
+- Set NTFS permissions manually via `icacls`
+- Trigger `dsregcmd /join` manually on every session host
+- Wait and hope Entra Connect syncs before hybrid join works
 
-The most repetitive support ticket in any production AVD environment. Without automation:
+**That works once. It does not scale, cannot be reproduced, and is not infrastructure as code.**
 
-```
-User hits "disk full"  →  Ticket raised  →  Admin investigates  →  
-Coordinates user signoff  →  Manually runs Resize-VHD  →  Verifies  →  Closes
-```
-
-**4-24 hours of disruption per incident. Multiplied across hundreds of users, it's a constant fire drill.**
-
-This project replaces that cycle with a closed-loop automation that detects and resolves capacity issues before users even notice.
+This project automates every single step — from VM deployment to AD DS domain join for Azure Files to Hybrid Azure AD Join — with zero manual intervention after `terraform apply`.
 
 ---
 
-## How It Works
+## Architecture
 
 ```
-            ┌──────────────────────────────────────────────────────┐
-            │              Closed-Loop Automation                  │
-            └──────────────────────────────────────────────────────┘
-
-  ┌─────────────┐      ┌──────────┐      ┌──────────────────┐
-  │  Logic App  │─────►│ Webhook  │─────►│ PowerShell       │
-  │  (hourly)   │      │          │      │ Runbook          │
-  └─────────────┘      └──────────┘      └────────┬─────────┘
-                                                  │
-                                          executes on
-                                                  │
-                                                  ▼
-  ┌─────────────────────┐                ┌──────────────────┐
-  │  Azure Files Share  │◄───────────────│  Hybrid Worker   │
-  │  (FSLogix VHDXes)   │   Resize-VHD   │  (= sh01)        │
-  │  100 GB hard cap    │     +5 GB      │                  │
-  └─────────────────────┘                └──────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                        Azure Subscription                         │
+│                                                                    │
+│  ┌────────────────────────┐    ┌──────────────────────────────┐  │
+│  │  Microsoft Entra ID    │    │  Azure Files (Premium)        │  │
+│  │  (Hybrid Join)         │    │  Identity-based access        │  │
+│  │  AzureAdJoined: YES    │    │  AD DS Kerberos auth          │  │
+│  └────────────┬───────────┘    └──────────────┬───────────────┘  │
+│               │                               │                   │
+│  ┌────────────▼───────────────────────────────▼───────────────┐  │
+│  │                    AVD Host Pool                            │  │
+│  │   sh01, sh02 ... shNN  (Windows 11 23H2)                   │  │
+│  │   - Domain joined to lab.local                             │  │
+│  │   - Hybrid Azure AD Joined (auto via Run Command)          │  │
+│  │   - FSLogix installed and configured                       │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│                                                                    │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │  Domain Controller  dc01  (Windows Server 2022)             │  │
+│  │  - AD DS forest lab.local                                   │  │
+│  │  - SystemAssigned managed identity                          │  │
+│  │  - Entra Connect installer pre-downloaded                   │  │
+│  │  - AD DS auth for Azure Files automated via Run Command     │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────┘
 ```
-
-**Per-VHDX decision logic:**
-
-1. Mount VHDX read-only (skip if user is signed in — file is locked)
-2. Read free space percentage
-3. Dismount
-4. If used > 80% AND (total allocated + 5GB) ≤ 100GB → **Resize-VHD +5GB**
-5. Log result as JSON
-
-The runbook treats each profile independently — only grows what truly needs it, leaves healthy profiles alone, enforces a hard cap on total allocated capacity to prevent budget surprises.
 
 ---
 
 ## What Gets Deployed
 
-| Layer | Resources |
-|-------|-----------|
-| **Foundation** | Resource Group, VNet (10.0.0.0/16), 2 subnets, NSG, custom DNS |
-| **Identity** | Domain Controller (`dc01`, Windows Server 2022 Datacenter), AD DS forest `lab.local` |
-| **AVD Control Plane** | Workspace, Host Pool (Pooled/BreadthFirst), Desktop Application Group |
-| **Session Host** | `sh01` (Windows 11 Multi-Session 23H2), domain-joined, AVD agent registered, FSLogix installed |
-| **FSLogix Storage** | Storage Account, SMB file share `profiles` (100 GB cap), VHDX profile containers |
-| **Automation** | Azure Automation Account, Hybrid Worker Group, PowerShell Runbook, Webhook |
-| **Scheduler** | Logic App with hourly recurrence trigger |
+| Module | Resources |
+|--------|-----------|
+| **resourcegroup** | Resource Group |
+| **vnet** | VNet (10.0.0.0/16), DC subnet, AVD subnet, NSG with RDP rule |
+| **dc** | Windows Server 2022 DC, AD DS forest `lab.local`, VNet DNS update, Entra Connect download, SystemAssigned managed identity |
+| **avd-core** | Host Pool (Pooled/BreadthFirst), Workspace, Desktop Application Group, Registration Token |
+| **session-host** | Windows 11 AVD VMs (count-based), domain join, AVD DSC registration, Hybrid AAD join (retry loop), FSLogix install, auto-shutdown |
+| **fslogix-storage** | Premium FileStorage account, profiles share, AD DS auth (fully automated), NTFS permissions, RBAC assignment |
 
-Roughly **25 Azure resources** deployed via **8 Terraform modules**, all version-controlled and reproducible.
+**Total: ~29 Azure resources across 6 modules**
+
+---
+
+## Key Automation Features
+
+### 1. Automated AD DS Authentication for Azure Files
+No manual RDP. No hand-running scripts. Terraform:
+- Assigns `Storage Account Contributor` to the DC managed identity
+- Runs a PowerShell Run Command on the DC that:
+  - Installs `Az.Accounts` + `Az.Storage` modules
+  - Downloads AzFilesHybrid
+  - Authenticates via `Connect-AzAccount -Identity` (managed identity — no passwords)
+  - Cleans up stale AD computer objects by SPN
+  - Runs `Join-AzStorageAccount`
+  - Sets NTFS permissions (`Domain Users: Modify`, `Domain Admins: Full`)
+
+```
+Portal result: Identity-based access → Configured (Windows AD)
+```
+
+### 2. Scalable Session Hosts
+Set `sh_count = N` to deploy N session hosts. Each one automatically gets:
+- Domain joined to `lab.local`
+- Registered in the AVD host pool
+- Hybrid Azure AD Joined (`DomainJoined: YES` + `AzureAdJoined: YES`)
+- FSLogix installed and configured
+
+```hcl
+sh_count = 3   # deploys sh01, sh02, sh03
+```
+
+### 3. Hybrid Azure AD Join with Retry Loop
+New session hosts run `dsregcmd /join` with a retry loop that waits up to 20 minutes for Entra Connect to sync the computer object — no manual intervention needed even if sync is delayed.
+
+### 4. Cache-Safe Run Commands
+Azure Run Commands cache execution results by name. This project embeds the MD5 hash of each script in the resource name:
+```hcl
+name = "setup-ad-${substr(md5(local.ad_join_script), 0, 8)}"
+```
+When the script changes, the name changes, the cache is busted — fresh execution every time.
 
 ---
 
@@ -83,22 +116,22 @@ Roughly **25 Azure resources** deployed via **8 Terraform modules**, all version
 .
 ├── main.tf                          # Composes all modules
 ├── variables.tf                     # Root inputs
-├── outputs.tf                       # Exposes useful values
-├── provider.tf                      # AzureRM + HCP Terraform backend
-├── terraform.tfvars                 # Lab-specific values
-├── LAB-SETUP.md                     # Post-deploy manual steps
+├── outputs.tf                       # Key outputs (IPs, passwords, tokens)
+├── provider.tf                      # AzureRM provider (az login auth)
+├── terraform.tfvars.example         # Template — copy to terraform.tfvars
 │
 └── modules/
     ├── resourcegroup/               # Resource Group
     ├── vnet/                        # VNet + subnets + NSG
-    ├── dc/                          # Domain Controller + AD DS install
-    │   └── scripts/install-ad.ps1.tftpl
-    ├── avd-core/                    # AVD Workspace + Host Pool + App Group
-    ├── session-host/                # Win11 VM + domain join + AVD agent
-    ├── fslogix-storage/             # Storage Account + Share + FSLogix install
-    │   └── scripts/install-fslogix.ps1.tftpl
-    └── fslogix-automation/          # Automation Account + Runbook + Logic App
-        └── scripts/fslogix-autogrow.ps1
+    ├── dc/                          # DC VM + AD DS install + Entra Connect download
+    │   └── scripts/
+    │       └── install-ad.ps1.tftpl
+    ├── avd-core/                    # Host Pool + Workspace + App Group
+    ├── session-host/                # Win11 VM + domain join + AVD agent + hybrid join
+    └── fslogix-storage/             # Storage + share + AD DS auth + NTFS
+        └── scripts/
+            ├── install-fslogix.ps1.tftpl
+            └── join-storage-to-ad.ps1.tftpl
 ```
 
 ---
@@ -108,175 +141,120 @@ Roughly **25 Azure resources** deployed via **8 Terraform modules**, all version
 ### Prerequisites
 
 - Azure subscription with Contributor access
-- HCP Terraform account (free tier) with workspace connected to this repo
-- Azure CLI and Terraform CLI installed locally
-- Globally unique storage account name (3-24 lowercase alphanumeric chars)
+- Terraform >= 1.5
+- Azure CLI
 
-### 1. Configure
+### 1. Clone and configure
 
-Update `terraform.tfvars`:
+```bash
+git clone https://github.com/Shabeer1024/AVD-Fslogix-Hybrid-ADDC.git
+cd AVD-Fslogix-Hybrid-ADDC
 
-```hcl
-resource_group_name           = "AVD-Lab"
-location                      = "southeastasia"
-domain_name                   = "lab.local"
-admin_source_ip               = "<your-public-ip>/32"
-fslogix_storage_account_name  = "stfslogix<unique-suffix>"
+cp terraform.tfvars.example terraform.tfvars
+# Edit terraform.tfvars with your values
 ```
 
-### 2. Configure HCP Terraform
+### 2. Login to Azure
 
-In your TFC workspace, add 4 environment variables (mark secret as Sensitive):
-
+```bash
+az login
+az account set --subscription "YOUR-SUBSCRIPTION-ID"
 ```
-ARM_CLIENT_ID        = <service-principal-app-id>
-ARM_CLIENT_SECRET    = <service-principal-secret>      [Sensitive]
-ARM_TENANT_ID        = <azure-tenant-id>
-ARM_SUBSCRIPTION_ID  = <azure-subscription-id>
-```
-
-Connect the workspace to this GitHub repo, branch `main`.
 
 ### 3. Deploy
 
 ```bash
-git commit --allow-empty -m "Initial deploy"
-git push
+terraform init
+terraform plan
+terraform apply
 ```
 
-TFC auto-triggers a plan. Review in the UI → **Confirm & Apply** → ~25 minute deploy.
+Expected deploy time: **~35 minutes**
 
-### 4. Post-Deploy
+### 4. Get outputs
 
-Follow [`LAB-SETUP.md`](./LAB-SETUP.md) to create the test user and validate FSLogix.
+```bash
+terraform output                              # show all outputs
+terraform output -raw dc_admin_password       # DC admin password
+terraform output -raw avd_registration_token  # host pool token
+```
 
 ---
 
-## Validating the Automation
+## Post-Deployment Steps
 
-### Verify infrastructure
+### Configure Microsoft Entra Connect (required for Hybrid Join)
 
-```bash
-# All VM extensions Succeeded
-az vm extension list -g AVD-Lab --vm-name sh01 -o table
+```
+RDP to dc01 (IP from: terraform output dc_public_ip)
+Username: labadmin
+Password: terraform output -raw dc_admin_password
 
-# Resize-VHD available on session host
-az vm run-command invoke -g AVD-Lab -n sh01 --command-id RunPowerShellScript \
-  --scripts "Import-Module Hyper-V; Get-Command Resize-VHD"
-
-# Hybrid Worker registered
-az automation hrwg show --automation-account-name aa-fslogix-avdlab \
-  -g AVD-Lab --name hwg-fslogix
+Desktop → AzureADConnect.msi → Run wizard:
+  1. Customize → Install
+  2. Password Hash Sync
+  3. Connect to Entra ID with Global Admin
+  4. Connect to lab.local
+  5. Optional features → check "Hybrid Azure AD join"
+  6. SCP → tick lab.local → Install
 ```
 
-### Demo the auto-grow firing
+### Force sync after deploy
 
-1. **RDP to DC** (public IP) as `labadmin@lab.local`
-2. **From DC, RDP to sh01** (10.0.2.x) as `testuser1@lab.local` → triggers FSLogix VHDX creation
-3. **Fill the profile past 80%** from inside the session:
 ```powershell
-   $fs = New-Object IO.FileStream("C:\Users\testuser1\Documents\bigfile.dat", [IO.FileMode]::Create)
-   $fs.SetLength(8.5GB); $fs.Close()
-```
-4. **Sign out testuser1** (so the VHDX unlocks)
-5. **Trigger the Logic App manually**:
-```bash
-   az rest --method POST \
-     --uri "https://management.azure.com/subscriptions/<sub-id>/resourceGroups/AVD-Lab/providers/Microsoft.Logic/workflows/lapp-fslogix-autogrow/triggers/hourly-trigger/run?api-version=2016-06-01"
-```
-6. **Check Automation Account → Jobs → Output** — should show:
-```json
-   {
-     "Status": "Resized",
-     "CurrentSizeGB": 10,
-     "NewSizeGB": 15,
-     "UsedPercent": 85.5
-   }
+# On DC — syncs new computer objects immediately
+Import-Module ADSync
+Start-ADSyncSyncCycle -PolicyType Delta
 ```
 
-The VHDX grew from 10 GB to 15 GB. Automatically. No manual intervention.
+### Verify Hybrid Join on session hosts
+
+```powershell
+# On sh01 or sh02
+dsregcmd /status
+
+# Expected:
+# AzureAdJoined  : YES
+# DomainJoined   : YES
+```
+
+### Verify FSLogix
+
+```
+Login via AVD client → check share:
+\\stfslogix<name>.file.core.windows.net\profiles\
+
+Should see: LAB_username_S-1-5-...\Profile_username.vhdx
+```
 
 ---
 
-## Why This Architecture
+## Scaling Session Hosts
 
-| Decision | Why |
-|----------|-----|
-| **Per-VHDX resize** (not share-quota expansion) | Surgical — only grows profiles that truly need it, gives per-user visibility |
-| **Hybrid Worker** (not cloud sandbox runbook) | `Resize-VHD` requires the Hyper-V PowerShell module, unavailable in Azure cloud runbooks |
-| **`AccessNetworkAsComputerObject=1`** | FSLogix defaults to using the logged-in user's credentials for SMB. The user has no creds for the storage account — only SYSTEM does (via cmdkey). This setting makes FSLogix use computer-account creds → finds the cmdkey entry → mounts successfully |
-| **Hard cap at runbook level** | Refuses to resize if total allocated would exceed 100 GB. Predictable budget, no surprises |
-| **80% threshold, 5 GB increments** | Triggers before user hits "disk full," grows gradually rather than over-provisioning |
-| **Logic App scheduler** (vs Cron on a VM) | Serverless, idempotent, easy retry, audit trail in Azure |
-| **Windows Server 2022 Datacenter (not Azure Edition)** for DC | Azure Edition restricts the AD-DS role due to Hotpatching requirements |
-| **VCS-driven HCP Terraform** | Code review gate via PR, audit trail in git, separation of plan vs apply approval |
-
----
-
-## Benefits
-
-### For end users
-- No more "disk full" panic mid-work
-- Profile grows quietly between sessions
-- Zero perceived disruption
-
-### For ops teams
-- Zero profile-resize tickets
-- ~10 hours/week saved per 100 users
-- No after-hours pages for profile issues
-
-### For finance
-- Predictable storage growth in 5 GB increments
-- Hard cap (100 GB) prevents runaway costs
-- Only grows what truly needs it
-
-### For security / compliance
-- Every resize action logged as JSON (timestamp + before/after sizes + caller)
-- MSI-based authentication (no stored credentials at runtime)
-- Every code change tracked in git
-- Hard cap enforced by code, not policy hope
-
-### Quantitative ROI — 200-user environment
-
-| Item | Without automation | With automation |
-|------|-------------------|-----------------|
-| Profile-full incidents | 8/month | 0 |
-| Ops time per incident | 45 min | 0 |
-| User productivity lost per incident | 2 hr | 0 |
-| Annual cost | **~$11,280** | **~$60** |
-
-**Net savings: ~$11,200/year** plus intangibles (user trust, ops morale, no off-hours pages).
-
----
-
-## Production Considerations
-
-This lab is functional but simplified for clarity. For production:
-
-| Concern | Lab approach | Production approach |
-|---------|--------------|---------------------|
-| Storage authentication | Storage key via cmdkey | AD DS authentication on storage account |
-| FSLogix config delivery | Direct registry write | Group Policy ADMX or Microsoft Intune |
-| Network access | Public endpoint | Private Endpoint + VNet integration |
-| Session host scale | Single VM | Pooled host pool with auto-scale (Azure Functions or scaling plan) |
-| Profile backup | None | Azure Backup of file share + retention policy |
-| Disaster recovery | None | GRS storage + paired-region failover |
-| Monitoring | Runbook JSON output | Log Analytics workspace + alerts + Action Groups |
-| Cap-reached notification | Log only | Teams/email alert via Action Group |
-| Cap value | Hardcoded 100 GB | Per-environment variable + drift detection |
-
-The **core pattern** (Logic App → Runbook → Hybrid Worker → action with cap enforcement) stays identical at scale.
-
----
-
-## Teardown
+```hcl
+# terraform.tfvars
+sh_count = 3   # change from 2 to 3
+```
 
 ```bash
-# Stops billing immediately
-az group delete --name AVD-Lab --yes --no-wait
+terraform apply
+# Only sh03 is created — sh01 and sh02 are untouched
 ```
 
-Or via HCP Terraform UI: **Settings → Destruction and Deletion → Queue destroy plan → Confirm & Apply**.
+---
+
+## Destroy and Recreate
+
+```bash
+# Destroy all resources
+terraform destroy
+
+# Wait 3 minutes (Azure holds storage account name briefly)
+# Then redeploy
+terraform apply
+```
+
+> **Note:** Destroying the storage account deletes all FSLogix user profile VHDXes permanently. In production, back up profiles before destroying.
 
 ---
 
@@ -284,72 +262,60 @@ Or via HCP Terraform UI: **Settings → Destruction and Deletion → Queue destr
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| DC `install-ad` extension fails with `0x80070057` | Using Windows Server 2022 Azure Edition (doesn't support AD-DS role) | Use `2022-datacenter-g2` SKU instead |
-| FSLogix login is fast (no delay), Desktop file doesn't persist | `AccessNetworkAsComputerObject` not set | Verify `HKLM:\SOFTWARE\FSLogix\Profiles\AccessNetworkAsComputerObject = 1` |
-| Runbook errors with `Resize-VHD not recognized` | Hyper-V module not loaded | Ensure runbook does `Import-Module Hyper-V` at start; reboot session host once if module discovery fails |
-| Runbook returns `Locked` for all profiles | Test user is currently signed in | Sign out before triggering runbook |
-| VM extension stuck in `Updating` / `Deleting` | Azure ARM operation queue stuck | `az vm deallocate` then `az vm start`. Last resort: delete + recreate VM |
-| `Multiple VMExtensions per handler not supported` | Two `CustomScriptExtension` resources on same Windows VM | Use `azurerm_virtual_machine_run_command` for the second one |
-| `osdisk-sh01 already exists` after VM rebuild | Managed disk orphaned by `az vm delete` | `az disk delete -g AVD-Lab -n osdisk-sh01 --yes`, then retry apply |
+| `SkuNotAvailable: Standard_B2s` | No capacity in region | Change `dc_vm_size`/`sh_vm_size` to `Standard_D2s_v3` |
+| `File is not supported for the account` | Wrong storage kind | Use `account_kind = "FileStorage"` with `Premium` tier |
+| `Provided resource group does not exist` in Run Command | Managed identity scoped too narrowly | Scope role assignment to resource group, not storage account |
+| `AD object already exists` error | Stale AD computer object from previous join | Script auto-detects by SPN and removes it |
+| Azure Run Command returns cached old result | Same Run Command name reused | Script name includes MD5 hash — changes with script content |
+| `AzureAdJoined: NO` after deploy | Entra Connect hasn't synced yet | Run `Start-ADSyncSyncCycle -PolicyType Delta` on DC, then `dsregcmd /join` on session host |
+| `Cannot change configuration — sync in progress` | Entra Connect wizard open | Close wizard, kill `AzureADConnect` process, retry |
+| `The string is missing the terminator` in Run Command | Double quotes in PowerShell script break JSON encoding | Use single quotes + string concatenation throughout |
+| Storage account name unavailable after destroy | Azure soft-delete hold | Wait 3 minutes before reapplying |
+
+---
+
+## AVD Identity Models — Three Phases
+
+| Phase | Model | DC Required | Entra Connect | Azure Files Auth | Repo |
+|-------|-------|-------------|---------------|-----------------|------|
+| 1 & 2 | Hybrid AD DS | Yes | Yes | AD DS Kerberos | **This repo** |
+| 3 | Cloud-only | No | No | Entra Kerberos | [AVD-FSLogix-Without-Domain-Controllers](https://github.com/Shabeer1024/AVD-FSLogix-Without-Domain-Controllers) |
 
 ---
 
 ## What This Project Demonstrates
 
 **Infrastructure as Code**
-- Multi-module Terraform composition
-- HCP Terraform VCS-driven workflow with manual approval gate
-- State backend management
-- Module input/output design
+- Multi-module Terraform with count-based scaling
+- Local state management with `az login` authentication
+- Idempotent module design (safe to run multiple times)
 
-**Azure architecture**
-- Active Directory Domain Services integration
-- Azure Virtual Desktop full deployment (Workspace + Host Pool + App Group + Session Host)
-- FSLogix profile container configuration
-- Storage account authentication patterns (cmdkey SYSTEM context)
-- System-Assigned Managed Identity for runtime auth
+**Azure Architecture**
+- AD DS + Entra ID hybrid identity model
+- Azure Virtual Desktop full stack deployment
+- FSLogix profile container with AD DS authentication
+- System-Assigned Managed Identity for passwordless automation
 
-**Automation engineering**
-- Azure Automation Runbooks on Hybrid Workers
-- Logic Apps as schedulers
-- Webhook integration patterns
-- Closed-loop self-healing systems
+**Automation Engineering**
+- PowerShell Run Commands triggered from Terraform
+- MD5 hash-based naming to bust Azure Run Command cache
+- Retry loops for eventual-consistency operations (Entra Connect sync)
+- Idempotent scripts with pre-flight cleanup
 
-**PowerShell**
-- Idempotent script design (`-Force`, existence checks)
-- Hyper-V cmdlet usage (`Resize-VHD`, `Mount-DiskImage`)
-- Robust error handling with try/catch and exit codes
-- JSON structured output for log parsing
-
-**Production engineering practices**
-- Capacity guardrails (hard cap enforcement)
-- Audit logging (every action recorded)
-- Graceful failure modes (skip locked profiles, log and continue)
-- Documentation for ops handoff
-
----
-
-## Roadmap
-
-Planned future work:
-
-- [ ] Switch storage to AD DS authentication (production-grade)
-- [ ] Add private endpoint for storage (network isolation)
-- [ ] Integrate Log Analytics workspace for centralized runbook logging
-- [ ] Action Group for cap-reached alerts (email/Teams)
-- [ ] Multi-session-host support with worker selection logic
-- [ ] Migrate to GitHub Actions as alternative to HCP Terraform
-- [ ] Add scheduled drift detection workflow
-- [ ] Per-OU FSLogix configuration via GPO (hybrid IaC + Group Policy pattern)
+**Real Problems Solved**
+- Azure Run Command caching behavior and how to work around it
+- JSON encoding breaking double-quoted PowerShell strings
+- Stale AD computer objects blocking storage account re-joins
+- Hybrid join timing dependency on Entra Connect sync cycle
 
 ---
 
 ## Author
 
-**Shabeer S** — Azure Cloud Enthusiast ☁️ | CloudOps  | Exploring Azure Administration | AVD Specialist | AZ-700 | AZ-140 | Terraform | Azure Networking | Modern Workspace | ITIL V4 |
+**Shabeer S** — Azure Cloud Engineer | AVD Specialist | AZ-140 | AZ-700 | ITIL v4
 
-- 13+ years enterprise IT (EUC → Cloud Architect transition)
-- Certifications: AZ-140, AZ-700, ITIL v4 (AZ-305 + Terraform Associate in progress)
+- 13+ years enterprise IT (EUC → Cloud Engineer transition)
+- Specialising in AVD, FSLogix, Azure Networking, and Infrastructure as Code
 - GitHub: [@Shabeer1024](https://github.com/Shabeer1024)
 - LinkedIn: [linkedin.com/in/shabeer-s-82690a156](https://linkedin.com/in/shabeer-s-82690a156)
 
@@ -359,7 +325,6 @@ Planned future work:
 
 MIT — see [LICENSE](./LICENSE)
 
-
 ---
 
-*If you found this useful, give it a star ⭐ and feel free to open an issue or PR with improvements.*
+*If this helped you, give it a ⭐ — and feel free to open an issue or PR.*
