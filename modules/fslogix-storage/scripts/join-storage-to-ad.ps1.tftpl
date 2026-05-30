@@ -8,10 +8,10 @@ try {
     Write-Host '=== Installing minimal Az modules ==='
     foreach ($mod in @('Az.Accounts', 'Az.Storage')) {
         if (-not (Get-Module -ListAvailable -Name $mod)) {
-            Write-Host "Installing $mod..."
+            Write-Host ('Installing ' + $mod + '...')
             Install-Module -Name $mod -Force -Scope AllUsers -AllowClobber -Repository PSGallery
         } else {
-            Write-Host "$mod already installed."
+            Write-Host ($mod + ' already installed.')
         }
     }
 
@@ -27,18 +27,18 @@ try {
     Set-AzContext -Subscription '${subscription_id}'
 
     Write-Host '=== Checking current AD auth status ==='
-    $sa = Get-AzStorageAccount -ResourceGroupName '${resource_group_name}' -Name '${storage_account_name}'
+    $sa          = Get-AzStorageAccount -ResourceGroupName '${resource_group_name}' -Name '${storage_account_name}'
     $currentAuth = $sa.AzureFilesIdentityBasedAuth.DirectoryServiceOptions
 
     if ($currentAuth -eq 'AD') {
         Write-Host 'Storage account is already joined to AD DS.'
     } else {
-        Write-Host '=== Cleaning up any stale AD objects for this storage account ==='
+        Write-Host '=== Cleaning up any stale AD objects ==='
         Import-Module ActiveDirectory
-        $spn = 'cifs/${storage_account_name}.file.core.windows.net'
+        $spn      = 'cifs/${storage_account_name}.file.core.windows.net'
         $staleObj = Get-ADObject -Filter { servicePrincipalName -like $spn } -ErrorAction SilentlyContinue
         if ($staleObj) {
-            Write-Host "Found stale AD object: $($staleObj.DistinguishedName) — removing it."
+            Write-Host ('Removing stale AD object: ' + $staleObj.DistinguishedName)
             Remove-ADObject -Identity $staleObj -Confirm:$false -Recursive
             Write-Host 'Stale AD object removed.'
         } else {
@@ -54,26 +54,20 @@ try {
         Write-Host 'Storage account joined to AD DS successfully.'
     }
 
-    Write-Host '=== Setting NTFS permissions on profiles share ==='
-    $key = (Get-AzStorageAccountKey `
-        -ResourceGroupName '${resource_group_name}' `
-        -Name '${storage_account_name}')[0].Value
-
-    net use Z: \\${storage_account_name}.file.core.windows.net\${share_name} `
-        /user:AZURE\${storage_account_name} $key /persistent:no
-
+    Write-Host '=== Setting NTFS permissions ==='
+    $key = (Get-AzStorageAccountKey -ResourceGroupName '${resource_group_name}' -Name '${storage_account_name}')[0].Value
+    net use Z: \\${storage_account_name}.file.core.windows.net\${share_name} /user:AZURE\${storage_account_name} $key /persistent:no
     icacls Z:\ /grant '${domain_netbios_name}\Domain Users:(M)'
     icacls Z:\ /grant 'CREATOR OWNER:(OI)(CI)(IO)(M)'
     icacls Z:\ /grant '${domain_netbios_name}\Domain Admins:(OI)(CI)(F)'
     icacls Z:\ /remove 'Authenticated Users'
-
     net use Z: /delete
     Write-Host 'NTFS permissions set successfully.'
 
     Stop-Transcript
     exit 0
 } catch {
-    Write-Host "ERROR: $_"
+    Write-Host ('ERROR: ' + $_.ToString())
     Stop-Transcript
     exit 1
 }

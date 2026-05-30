@@ -56,7 +56,7 @@ resource "azurerm_role_assignment" "fslogix_users_share" {
 
 # Run on DC: installs AzFilesHybrid, joins storage account to AD DS, sets NTFS permissions
 resource "azurerm_virtual_machine_run_command" "join_storage_to_ad" {
-  name               = "setup-storage-ad-auth"
+  name               = "setup-ad-${substr(md5(local.ad_join_script), 0, 8)}"
   virtual_machine_id = var.dc_vm_id
   location           = var.location
 
