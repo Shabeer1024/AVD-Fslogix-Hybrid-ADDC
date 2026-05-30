@@ -21,3 +21,7 @@ output "admin_username" {
 output "domain_name" {
   value = var.domain_name
 }
+
+output "principal_id" {
+  value = azurerm_windows_virtual_machine.dc.identity[0].principal_id
+}

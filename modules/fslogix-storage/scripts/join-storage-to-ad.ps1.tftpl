@@ -1,0 +1,79 @@
+$ErrorActionPreference = 'Stop'
+Start-Transcript 'C:\Windows\Temp\setup-storage-ad-auth.log' -Append -Force
+
+try {
+    Write-Host '=== Installing NuGet provider ==='
+    Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope AllUsers
+
+    Write-Host '=== Installing minimal Az modules ==='
+    foreach ($mod in @('Az.Accounts', 'Az.Storage')) {
+        if (-not (Get-Module -ListAvailable -Name $mod)) {
+            Write-Host "Installing $mod..."
+            Install-Module -Name $mod -Force -Scope AllUsers -AllowClobber -Repository PSGallery
+        } else {
+            Write-Host "$mod already installed."
+        }
+    }
+
+    Write-Host '=== Downloading AzFilesHybrid ==='
+    Invoke-WebRequest `
+        -Uri 'https://github.com/Azure-Samples/azure-files-samples/releases/latest/download/AzFilesHybrid.zip' `
+        -OutFile 'C:\AzFilesHybrid.zip' -UseBasicParsing
+    Expand-Archive 'C:\AzFilesHybrid.zip' -DestinationPath 'C:\AzFilesHybrid' -Force
+    Import-Module 'C:\AzFilesHybrid\AzFilesHybrid.psd1' -Force
+
+    Write-Host '=== Connecting to Azure using Managed Identity ==='
+    Connect-AzAccount -Identity
+    Set-AzContext -Subscription '${subscription_id}'
+
+    Write-Host '=== Checking current AD auth status ==='
+    $sa = Get-AzStorageAccount -ResourceGroupName '${resource_group_name}' -Name '${storage_account_name}'
+    $currentAuth = $sa.AzureFilesIdentityBasedAuth.DirectoryServiceOptions
+
+    if ($currentAuth -eq 'AD') {
+        Write-Host 'Storage account is already joined to AD DS.'
+    } else {
+        Write-Host '=== Cleaning up any stale AD objects for this storage account ==='
+        Import-Module ActiveDirectory
+        $spn = 'cifs/${storage_account_name}.file.core.windows.net'
+        $staleObj = Get-ADObject -Filter { servicePrincipalName -like $spn } -ErrorAction SilentlyContinue
+        if ($staleObj) {
+            Write-Host "Found stale AD object: $($staleObj.DistinguishedName) — removing it."
+            Remove-ADObject -Identity $staleObj -Confirm:$false -Recursive
+            Write-Host 'Stale AD object removed.'
+        } else {
+            Write-Host 'No stale AD object found.'
+        }
+
+        Write-Host '=== Joining storage account to AD DS ==='
+        Join-AzStorageAccount `
+            -ResourceGroupName '${resource_group_name}' `
+            -StorageAccountName '${storage_account_name}' `
+            -DomainAccountType 'ComputerAccount' `
+            -OrganizationalUnitDistinguishedName 'CN=Computers,${ou_dc_path}'
+        Write-Host 'Storage account joined to AD DS successfully.'
+    }
+
+    Write-Host '=== Setting NTFS permissions on profiles share ==='
+    $key = (Get-AzStorageAccountKey `
+        -ResourceGroupName '${resource_group_name}' `
+        -Name '${storage_account_name}')[0].Value
+
+    net use Z: \\${storage_account_name}.file.core.windows.net\${share_name} `
+        /user:AZURE\${storage_account_name} $key /persistent:no
+
+    icacls Z:\ /grant '${domain_netbios_name}\Domain Users:(M)'
+    icacls Z:\ /grant 'CREATOR OWNER:(OI)(CI)(IO)(M)'
+    icacls Z:\ /grant '${domain_netbios_name}\Domain Admins:(OI)(CI)(F)'
+    icacls Z:\ /remove 'Authenticated Users'
+
+    net use Z: /delete
+    Write-Host 'NTFS permissions set successfully.'
+
+    Stop-Transcript
+    exit 0
+} catch {
+    Write-Host "ERROR: $_"
+    Stop-Transcript
+    exit 1
+}

@@ -101,6 +101,12 @@ variable "fslogix_storage_account_name" {
   description = "Globally unique, lowercase, 3-24 chars"
   type        = string
 }
+variable "avd_users_group_object_id" {
+  description = "Entra ID Object ID of the AVD users group for SMB share access. Find in: Entra ID > Groups > your group > Overview > Object ID. Leave empty to skip RBAC assignment."
+  type        = string
+  default     = ""
+}
+
 variable "fslogix_share_quota_gb" {
   type    = number
   default = 100

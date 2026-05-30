@@ -53,6 +53,10 @@ resource "azurerm_windows_virtual_machine" "dc" {
     sku       = "2022-datacenter-g2"
     version   = "latest"
   }
+
+  identity {
+    type = "SystemAssigned"
+  }
 }
 
 resource "azurerm_virtual_machine_extension" "install_ad" {

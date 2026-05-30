@@ -1,3 +1,5 @@
+data "azurerm_client_config" "current" {}
+
 module "resource_group" {
   source              = "./modules/resourcegroup"
   resource_group_name = var.resource_group_name
@@ -123,6 +125,13 @@ module "fslogix_storage" {
   fslogix_initial_size_mb = var.fslogix_initial_size_mb
   session_host_vms        = { for sh in module.session_host : sh.vm_name => sh.vm_id }
   tags                    = var.tags
+
+  dc_vm_id                  = module.domain_controller.vm_id
+  dc_principal_id           = module.domain_controller.principal_id
+  domain_name               = var.domain_name
+  domain_netbios_name       = upper(split(".", var.domain_name)[0])
+  subscription_id           = data.azurerm_client_config.current.subscription_id
+  avd_users_group_object_id = var.avd_users_group_object_id
 
   depends_on = [module.session_host]
 }

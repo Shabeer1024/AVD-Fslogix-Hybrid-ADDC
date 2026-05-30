@@ -113,36 +113,38 @@ resource "azurerm_virtual_machine_run_command" "hybrid_join" {
 
   source {
     script = <<-EOT
-      $ErrorActionPreference = "Stop"
-      Start-Transcript "C:\Windows\Temp\hybrid-join.log" -Append -Force
-      try {
-          Write-Host "Waiting 60s for domain join to fully settle..."
-          Start-Sleep -Seconds 60
+      Start-Transcript 'C:\Windows\Temp\hybrid-join.log' -Append -Force
+      Write-Host 'Waiting 60s for domain join to settle...'
+      Start-Sleep -Seconds 60
 
-          Write-Host "Triggering Hybrid Azure AD Join..."
-          & dsregcmd /join
-          Start-Sleep -Seconds 30
+      $maxAttempts = 20
+      $attempt     = 0
+      $joined      = $false
 
-          Write-Host "=== Hybrid Join Status ==="
-          $status = dsregcmd /status
-          $status | Select-String "AzureAdJoined|DomainJoined|WorkplaceJoined"
-
-          $azJoined = ($status | Select-String "AzureAdJoined\s*:\s*YES").Count -gt 0
-          $domJoined = ($status | Select-String "DomainJoined\s*:\s*YES").Count -gt 0
-
+      while (-not $joined -and $attempt -lt $maxAttempts) {
+          $attempt++
+          Write-Host "=== Attempt $attempt of $maxAttempts ==="
+          & dsregcmd /join 2>&1 | Write-Host
+          Start-Sleep -Seconds 20
+          $status    = & dsregcmd /status
+          $azJoined  = ($status | Select-String 'AzureAdJoined\s*:\s*YES').Count -gt 0
+          $domJoined = ($status | Select-String 'DomainJoined\s*:\s*YES').Count -gt 0
+          Write-Host "AzureAdJoined=$azJoined DomainJoined=$domJoined"
           if ($azJoined -and $domJoined) {
-              Write-Host "SUCCESS: Hybrid Azure AD Join confirmed."
+              $joined = $true
+              Write-Host "SUCCESS: Hybrid join confirmed on attempt $attempt."
           } else {
-              Write-Host "WARNING: Join may still be pending. Check dsregcmd /status after login."
+              Write-Host 'Not joined yet - waiting 60s for Entra Connect sync...'
+              Start-Sleep -Seconds 60
           }
-
-          Stop-Transcript
-          exit 0
-      } catch {
-          Write-Host "ERROR: $_"
-          Stop-Transcript
-          exit 1
       }
+
+      if (-not $joined) {
+          Write-Host 'WARNING: Hybrid join not confirmed. Run dsregcmd /join manually after Entra Connect syncs.'
+      }
+
+      Stop-Transcript
+      exit 0
     EOT
   }
 
