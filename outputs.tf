@@ -43,12 +43,12 @@ output "avd_registration_token" {
   sensitive   = true
 }
 
-output "session_host_name" {
-  value = module.session_host.vm_name
+output "session_host_names" {
+  value = [for sh in module.session_host : sh.vm_name]
 }
 
-output "session_host_private_ip" {
-  value = module.session_host.private_ip_address
+output "session_host_private_ips" {
+  value = [for sh in module.session_host : sh.private_ip_address]
 }
 
 output "fslogix_storage_account" { value = module.fslogix_storage.storage_account_name }

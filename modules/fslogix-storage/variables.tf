@@ -16,8 +16,10 @@ variable "fslogix_initial_size_mb" {
   type    = number
   default = 10240
 }
-variable "session_host_vm_id"   { type = string }
-variable "session_host_vm_name" { type = string }
+variable "session_host_vms" {
+  description = "Map of session host name => VM resource ID — FSLogix is installed on every host"
+  type        = map(string)
+}
 variable "tags" {
   type    = map(string)
   default = {}

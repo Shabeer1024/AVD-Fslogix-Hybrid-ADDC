@@ -84,13 +84,14 @@ module "avd_core" {
 }
 
 module "session_host" {
+  count  = var.sh_count
   source = "./modules/session-host"
 
   resource_group_name = var.resource_group_name
   location            = var.location
   subnet_id           = module.networking.subnet_ids["avd"]
 
-  vm_name        = var.sh_vm_name
+  vm_name        = format("sh%02d", count.index + 1)
   vm_size        = var.sh_vm_size
   admin_username = var.dc_admin_username
   admin_password = random_password.dc_admin.result
@@ -120,8 +121,7 @@ module "fslogix_storage" {
   storage_account_name    = var.fslogix_storage_account_name
   share_quota_gb          = var.fslogix_share_quota_gb
   fslogix_initial_size_mb = var.fslogix_initial_size_mb
-  session_host_vm_id      = module.session_host.vm_id
-  session_host_vm_name    = module.session_host.vm_name
+  session_host_vms        = { for sh in module.session_host : sh.vm_name => sh.vm_id }
   tags                    = var.tags
 
   depends_on = [module.session_host]

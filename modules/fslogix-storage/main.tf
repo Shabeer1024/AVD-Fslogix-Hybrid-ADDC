@@ -28,8 +28,10 @@ locals {
 }
 
 resource "azurerm_virtual_machine_extension" "install_fslogix" {
+  for_each = var.session_host_vms
+
   name                       = "install-fslogix"
-  virtual_machine_id         = var.session_host_vm_id
+  virtual_machine_id         = each.value
   publisher                  = "Microsoft.Compute"
   type                       = "CustomScriptExtension"
   type_handler_version       = "1.10"
@@ -40,8 +42,8 @@ resource "azurerm_virtual_machine_extension" "install_fslogix" {
   })
 
   timeouts {
-      create = "60m"
-      update = "60m"
-      delete = "30m"
-   }
+    create = "60m"
+    update = "60m"
+    delete = "30m"
+  }
 }

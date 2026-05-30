@@ -85,10 +85,10 @@ variable "auto_shutdown_timezone" {
   default     = "India Standard Time"
 }
 
-variable "sh_vm_name" {
-  description = "Session host VM name"
-  type        = string
-  default     = "sh01"
+variable "sh_count" {
+  description = "Number of session hosts to deploy in the host pool"
+  type        = number
+  default     = 1
 }
 
 variable "sh_vm_size" {
