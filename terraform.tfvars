@@ -16,7 +16,7 @@ subnets = {
 }
 
 nsg_name        = "nsg-avd-lab"
-admin_source_ip = "49.206.129.31"   # Your public IP — update with: curl ifconfig.me
+admin_source_ip = "49.206.132.127"   # Your public IP — update with: curl ifconfig.me
 
 sh_vm_name = "sh01"
 sh_vm_size = "Standard_D2s_v3"
