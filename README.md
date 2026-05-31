@@ -55,6 +55,46 @@ This project automates every single step — from VM deployment to AD DS domain 
 
 ---
 
+## Lab Design vs Production — Domain Controller
+
+> **Why is the DC an Azure VM?**
+
+This is a **lab environment**. The Domain Controller (`dc01`) is deployed as an Azure VM to keep the entire stack self-contained — no on-premises infrastructure, no VPN, no ExpressRoute needed. Anyone can clone this repo and run `terraform apply` in a fresh Azure subscription.
+
+The DC uses a **System-Assigned Managed Identity** to authenticate to Azure during the storage account AD join. This is intentional — it demonstrates the automation concept clearly: no passwords, no secrets, just Azure-native identity. You can see exactly what permissions are assigned and why.
+
+---
+
+### Adapting This for a Production On-Premises DC
+
+In production, your DC lives on-premises. Two things change:
+
+**1. Authentication — swap Managed Identity for a Service Principal**
+
+```powershell
+# Lab (Azure VM DC — Managed Identity)
+Connect-AzAccount -Identity
+
+# Production (on-prem DC — Service Principal)
+Connect-AzAccount -ServicePrincipal `
+    -TenantId    "<your-tenant-id>" `
+    -Credential  (New-Object PSCredential("<sp-client-id>",
+                  (ConvertTo-SecureString "<sp-client-secret>" -AsPlainText -Force)))
+```
+
+Assign the Service Principal `Storage Account Contributor` on the resource group — same scope as the managed identity role assignment in this repo.
+
+**2. Script delivery — remove the Run Command, run manually**
+
+`azurerm_virtual_machine_run_command` only works on Azure VMs. For an on-prem DC:
+- Remove the `azurerm_virtual_machine_run_command.join_storage_to_ad` resource from `modules/fslogix-storage/main.tf`
+- Run `terraform output -raw ad_join_script` to get the rendered script
+- Execute it once on your on-prem DC (as a Domain Admin)
+
+**The script logic itself does not change.** Only the login method and delivery mechanism differ.
+
+---
+
 ## What Gets Deployed
 
 | Module | Resources |
